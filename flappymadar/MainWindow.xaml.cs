@@ -12,224 +12,281 @@ namespace FlappyBird
 {
     public partial class MainWindow : Window
     {
-       
-        private double velocity = 0;
-        private const double GRAVITY_PX_PER_SEC2 = 1800; 
-        private const double JUMP_VELOCITY_PX_PER_SEC = -520; 
-        private int score = 0;
-        private bool gameOver = false;
-        private Random rand = new Random();
+        private bool _gameRunning = false;
+        private bool _gameOver = false;
+
         private TimeSpan _lastRenderTime = TimeSpan.Zero;
 
+        private double _velocity = 0;
+        private double _gravityPxPerSec2 = 1800;
+        private double _jumpVelocityPxPerSec = -520;
 
-        private List<PipePair> pipes = new List<PipePair>();
-        private const int PIPE_WIDTH = 80;
-        private const int PIPE_GAP = 150;
-        private const double PIPE_SPEED_PX_PER_SEC = 240;
-        private const double PIPE_SPACING_PX = 360;
-
-        private List<Rectangle> rainDrops = new List<Rectangle>();
-        private bool isRaining = false;
-        private const double RAIN_GRAVITY = 8;
-        private const double RAIN_JUMP_MODIFIER = 0.6;
-
-      
-        private bool isFoggy = false;
-        
-        private int columnsPassed = 0;
-        private WeatherPhase currentWeatherPhase = WeatherPhase.ClearWeather;
-
-        private enum WeatherPhase
-        {
-            ClearWeather,
-            FogOnly,
-            RainOnly,
-            FogAgain,
-            RainAgain
-        }
-
-        
-        private const int CANVAS_WIDTH = 900;
-        private const int CANVAS_HEIGHT = 600;
         private const int BIRD_WIDTH = 50;
         private const int BIRD_HEIGHT = 40;
         private const int GROUND_LEVEL = 550;
 
-       
-        private Dictionary<string, BitmapImage> imageCache = new Dictionary<string, BitmapImage>();
-        private BitmapImage _birdUp, _birdMid, _birdDown, _gameOverImage;
+        private int _score = 0;
+        private int _columnsPassed = 0;
+
+        private readonly Random _rand = new Random();
+        private readonly List<PipePair> _pipes = new List<PipePair>();
+
+        private const int CANVAS_WIDTH = 900;
+        private const int CANVAS_HEIGHT = 600;
+        private const int PIPE_WIDTH = 80;
+        private const int PIPE_GAP = 150;
+
+        private double _pipeSpeedPxPerSec = 240;
+        private double _pipeSpacingPx = 360;
+
+        private readonly List<Rectangle> _rainDrops = new List<Rectangle>();
+        private bool _isRaining = false;
+        private const double RAIN_DROP_SPEED_PX_PER_SEC = 450;
+        private const double RAIN_JUMP_MODIFIER = 0.6;
+
+        private bool _isFoggy = false;
+
+        private GravityMode _gravityMode = GravityMode.Normal;
+        private MapMode _mapMode = MapMode.Flappy;
+        private WeatherMode _fogMode = WeatherMode.Few;
+        private WeatherMode _rainMode = WeatherMode.Few;
+
+        private enum GravityMode { Strong, Normal, Weak }
+        private enum MapMode { Flappy, Petrik }
+        private enum WeatherMode { Off, On, Few }
+
+        private int _petrikIndex = 0;
+        private readonly string[] _petrikPaths =
+        {
+            @"kepek\Petrik.jpg",
+            @"kepek\Petrik2.jpg",
+            @"kepek\Petrik3.jpg",
+            @"kepek\Petrik4.jpg",
+            @"kepek\Petrik5.jpg"
+        };
+
+        private readonly Dictionary<string, BitmapImage> _imageCache = new Dictionary<string, BitmapImage>();
+        private BitmapImage _birdUp, _birdMid, _birdDown;
+        private BitmapImage _bgFlappy;
+
+        private enum BirdPose { Up, Mid, Down }
+        private BirdPose _pose = BirdPose.Mid;
 
         public MainWindow()
         {
             InitializeComponent();
-            InitializeGame();
+
+            SetMenuVisible(true);
+            SetGameUiEnabled(false);
+
+            PreloadBaseImages();
+            InitializeRainDrops();
+            SetRainVisible(false);
+            SetFogVisible(false);
+        }
+        private void StartButton_Click(object sender, RoutedEventArgs e)
+        {
+            ReadOptionsFromMenu();
+            ApplyOptions();
+            StartNewGame();
         }
 
-        private void InitializeGame()
+        private void ReadOptionsFromMenu()
         {
-            GameCanvas.Focus();
+            _gravityMode = GravityCombo.SelectedIndex switch
+            {
+                0 => GravityMode.Strong,
+                2 => GravityMode.Weak,
+                _ => GravityMode.Normal
+            };
 
-            
-            PreloadImages();
-            
-            InitializeRainDrops();
-            
+            _mapMode = MapCombo.SelectedIndex == 1 ? MapMode.Petrik : MapMode.Flappy;
+
+            _fogMode = FogCombo.SelectedIndex switch
+            {
+                0 => WeatherMode.Off,
+                1 => WeatherMode.On,
+                _ => WeatherMode.Few
+            };
+
+            _rainMode = RainCombo.SelectedIndex switch
+            {
+                0 => WeatherMode.Off,
+                1 => WeatherMode.On,
+                _ => WeatherMode.Few
+            };
+        }
+
+        private void ApplyOptions()
+        {
+
+            (_gravityPxPerSec2, _jumpVelocityPxPerSec) = _gravityMode switch
+            {
+                GravityMode.Strong => (2200, -560),
+                GravityMode.Weak => (1400, -480),
+                _ => (1800, -520)
+            };
+
+            if (_mapMode == MapMode.Flappy)
+            {
+                BackgroundImage.Source = _bgFlappy;
+            }
+            else
+            {
+                _petrikIndex = 0;
+                BackgroundImage.Source = LoadFrozenImage(_petrikPaths[_petrikIndex]);
+            }
+
+            SetFogVisible(false);
+            SetRainVisible(false);
+        }
+
+        private void SetMenuVisible(bool visible)
+        {
+            StartMenu.Visibility = visible ? Visibility.Visible : Visibility.Collapsed;
+        }
+
+        private void SetGameUiEnabled(bool enabled)
+        {
+            GameCanvas.Focusable = enabled;
+            if (enabled) GameCanvas.Focus();
+        }
+
+        private void StartNewGame()
+        {
+            _gameOver = false;
+            _gameRunning = true;
+
+            _score = 0;
+            _columnsPassed = 0;
+            _velocity = 0;
+            _pose = BirdPose.Mid;
+
+            ScoreDisplay.Text = "Pont: 0";
+
+            GameOverPanel.Visibility = Visibility.Collapsed;
+
+            BirdImage.Source = _birdMid;
+            Canvas.SetLeft(BirdImage, 100);
+            Canvas.SetTop(BirdImage, 250);
+
+            foreach (var p in _pipes)
+            {
+                GameCanvas.Children.Remove(p.TopPipe);
+                GameCanvas.Children.Remove(p.BottomPipe);
+            }
+            _pipes.Clear();
             SpawnPipe();
 
-            UpdateWeatherUI();
+            ApplyWeatherByMode();
 
+            _lastRenderTime = TimeSpan.Zero;
+            CompositionTarget.Rendering -= OnRenderFrame;
             CompositionTarget.Rendering += OnRenderFrame;
+
+            SetMenuVisible(false);
+            SetGameUiEnabled(true);
         }
 
-
-        private void PreloadImages()
+        private void EndGame()
         {
-            _birdUp = LoadFrozenImage("kepek/flappyup.png");
-            _birdMid = LoadFrozenImage("kepek/flappymid.png");
-            _birdDown = LoadFrozenImage("kepek/flappydown.png");
-            _gameOverImage = LoadFrozenImage("kepek/gameover.png");
+            _gameOver = true;
+            _gameRunning = false;
+            CompositionTarget.Rendering -= OnRenderFrame;
 
-            BitmapImage bgImage = LoadFrozenImage("kepek/background.jpg");
-            if (bgImage != null)
-                BackgroundImage.Source = bgImage;
-
-            if (_birdMid != null)
-                BirdImage.Source = _birdMid;
+            FinalScoreText2.Text = $"Végső pont: {_score}";
+            GameOverPanel.Visibility = Visibility.Visible;
         }
 
-        private BitmapImage LoadFrozenImage(string imagePath)
+        private void BackToMenuButton_Click(object sender, RoutedEventArgs e)
         {
-            if (imageCache.ContainsKey(imagePath))
-                return imageCache[imagePath];
+            CompositionTarget.Rendering -= OnRenderFrame;
+            _gameRunning = false;
+            _gameOver = false;
 
-            try
-            {
-                string fullPath = System.IO.Path.Combine(AppDomain.CurrentDomain.BaseDirectory, imagePath);
+            GameOverPanel.Visibility = Visibility.Collapsed;
 
-                if (File.Exists(fullPath))
-                {
-                    BitmapImage bitmap = new BitmapImage();
-                    bitmap.BeginInit();
-                    bitmap.UriSource = new Uri(fullPath, UriKind.Absolute);
-                    bitmap.CacheOption = BitmapCacheOption.OnLoad;
-                    bitmap.EndInit();
-                    bitmap.Freeze();
-
-                    imageCache[imagePath] = bitmap;
-                    return bitmap;
-                }
-                else
-                {
-                    MessageBox.Show($"Fájl nem található: {fullPath}");
-                }
-            }
-            catch (Exception ex)
-            {
-                MessageBox.Show($"Hiba a betöltéskor: {imagePath}\n{ex.Message}");
-            }
-
-            return null;
+            SetMenuVisible(true);
         }
 
-        private void InitializeRainDrops()
-        {
-            for (int i = 0; i < 20; i++)
-            {
-                Rectangle drop = new Rectangle
-                {
-                    Width = 3,
-                    Height = 15,
-                    Fill = System.Windows.Media.Brushes.LightBlue,
-                    Opacity = 0.7
-                };
-
-                Canvas.SetLeft(drop, rand.Next(0, CANVAS_WIDTH));
-                Canvas.SetTop(drop, rand.Next(-100, 0));
-                GameCanvas.Children.Add(drop);
-                rainDrops.Add(drop);
-            }
-        }
-
-        protected override void OnPreviewKeyDown(KeyEventArgs e)
+        private void OnPreviewKeyDown(object sender, KeyEventArgs e)
         {
             if (e.Key == Key.Space || e.Key == Key.Up)
             {
-                if (gameOver)
+                if (_gameOver)
                 {
-                    RestartGame();
+                    BackToMenuButton_Click(this, new RoutedEventArgs());
                 }
                 else
                 {
                     JumpBird();
                 }
+
                 e.Handled = true;
             }
         }
 
-     
-        protected override void OnMouseLeftButtonDown(MouseButtonEventArgs e)
+        private void OnMouseLeftButtonDown(object sender, MouseButtonEventArgs e)
         {
-            if (!gameOver)
+            if (_gameOver)
             {
-                JumpBird();
-                e.Handled = true;
+                BackToMenuButton_Click(this, new RoutedEventArgs());
             }
             else
             {
-                RestartGame();
+                JumpBird();
             }
+
+            e.Handled = true;
         }
 
         private void JumpBird()
         {
-            double v = isRaining ? (JUMP_VELOCITY_PX_PER_SEC * RAIN_JUMP_MODIFIER) : JUMP_VELOCITY_PX_PER_SEC;
-            velocity = v;
+            double v = _jumpVelocityPxPerSec;
+
+            if (_isRaining) v *= RAIN_JUMP_MODIFIER;
+
+            _velocity = v;
         }
 
         private void OnRenderFrame(object? sender, EventArgs e)
         {
-            if (gameOver) return;
+            if (_gameOver || !_gameRunning) return;
 
             var re = (RenderingEventArgs)e;
 
-           
             if (_lastRenderTime == TimeSpan.Zero)
             {
                 _lastRenderTime = re.RenderingTime;
                 return;
             }
 
-           
             double dt = (re.RenderingTime - _lastRenderTime).TotalSeconds;
             _lastRenderTime = re.RenderingTime;
 
-            
             if (dt > 0.05) dt = 0.05;
 
-       
             UpdateBird(dt);
             UpdatePipes(dt);
-            UpdateScore();
+            UpdateScoreAndWeather();
             CheckCollisions();
             UpdateRain(dt);
         }
 
-    
         private void UpdateBird(double dt)
         {
-            velocity += GRAVITY_PX_PER_SEC2 * dt;
-            double newTop = Canvas.GetTop(BirdImage) + velocity * dt;
+            _velocity += _gravityPxPerSec2 * dt;
+            double newTop = Canvas.GetTop(BirdImage) + _velocity * dt;
 
             if (newTop < 0)
             {
                 Canvas.SetTop(BirdImage, 0);
-                velocity = 0;
+                _velocity = 0;
             }
-    
             else if (newTop + BIRD_HEIGHT > GROUND_LEVEL)
             {
                 Canvas.SetTop(BirdImage, GROUND_LEVEL - BIRD_HEIGHT);
-                GameOver();
+                EndGame();
                 return;
             }
             else
@@ -242,33 +299,34 @@ namespace FlappyBird
 
         private void UpdateBirdImage()
         {
-            BitmapImage newImage = null;
+            BirdPose next =
+                _velocity < -200 ? BirdPose.Up :
+                _velocity > 200 ? BirdPose.Down :
+                BirdPose.Mid;
 
-            if (velocity < -200)
-                newImage = _birdUp;
-            else if (velocity > 200)
-                newImage = _birdDown;
-            else
-                newImage = _birdMid;
+            if (next == _pose) return;
+            _pose = next;
 
-            if (newImage != null && BirdImage.Source != newImage)
+            BirdImage.Source = _pose switch
             {
-                BirdImage.Source = newImage;
-            }
+                BirdPose.Up => _birdUp,
+                BirdPose.Down => _birdDown,
+                _ => _birdMid
+            };
         }
 
         private void SpawnPipe()
         {
             int minGapStart = 80;
             int maxGapStart = CANVAS_HEIGHT - PIPE_GAP - 80;
-            int gapStart = rand.Next(minGapStart, maxGapStart);
+            int gapStart = _rand.Next(minGapStart, maxGapStart);
 
-            Rectangle topPipe = new Rectangle
+            var topPipe = new Rectangle
             {
                 Width = PIPE_WIDTH,
                 Height = gapStart,
-                Fill = System.Windows.Media.Brushes.Green,
-                Stroke = System.Windows.Media.Brushes.DarkGreen,
+                Fill = Brushes.Green,
+                Stroke = Brushes.DarkGreen,
                 StrokeThickness = 2
             };
             Canvas.SetLeft(topPipe, CANVAS_WIDTH);
@@ -276,210 +334,236 @@ namespace FlappyBird
             GameCanvas.Children.Add(topPipe);
 
             int bottomPipeStart = gapStart + PIPE_GAP;
-            Rectangle bottomPipe = new Rectangle
+            var bottomPipe = new Rectangle
             {
                 Width = PIPE_WIDTH,
                 Height = CANVAS_HEIGHT - bottomPipeStart,
-                Fill = System.Windows.Media.Brushes.Green,
-                Stroke = System.Windows.Media.Brushes.DarkGreen,
+                Fill = Brushes.Green,
+                Stroke = Brushes.DarkGreen,
                 StrokeThickness = 2
             };
             Canvas.SetLeft(bottomPipe, CANVAS_WIDTH);
             Canvas.SetTop(bottomPipe, bottomPipeStart);
             GameCanvas.Children.Add(bottomPipe);
 
-            pipes.Add(new PipePair
-            {
-                TopPipe = topPipe,
-                BottomPipe = bottomPipe,
-                HasScored = false
-            });
+            _pipes.Add(new PipePair { TopPipe = topPipe, BottomPipe = bottomPipe, HasScored = false });
         }
 
         private void UpdatePipes(double dt)
         {
-            for (int i = 0; i < pipes.Count; i++)
+            for (int i = 0; i < _pipes.Count; i++)
             {
-                double newLeft = Canvas.GetLeft(pipes[i].TopPipe) - PIPE_SPEED_PX_PER_SEC * dt;
-                Canvas.SetLeft(pipes[i].TopPipe, newLeft);
-                Canvas.SetLeft(pipes[i].BottomPipe, newLeft);
+                double x = Canvas.GetLeft(_pipes[i].TopPipe) - _pipeSpeedPxPerSec * dt;
+                Canvas.SetLeft(_pipes[i].TopPipe, x);
+                Canvas.SetLeft(_pipes[i].BottomPipe, x);
             }
-
-            if (pipes.Count == 0)
+            
+            if (_pipes.Count == 0)
             {
                 SpawnPipe();
                 return;
             }
 
-            double lastX = Canvas.GetLeft(pipes[pipes.Count - 1].TopPipe);
-            if (lastX < CANVAS_WIDTH - PIPE_SPACING_PX)
-            {
+            double lastX = Canvas.GetLeft(_pipes[^1].TopPipe);
+            if (lastX < CANVAS_WIDTH - _pipeSpacingPx)
                 SpawnPipe();
-            }
 
-            for (int i = pipes.Count - 1; i >= 0; i--)
+            for (int i = _pipes.Count - 1; i >= 0; i--)
             {
-                if (Canvas.GetLeft(pipes[i].TopPipe) < -PIPE_WIDTH - 50)
+                if (Canvas.GetLeft(_pipes[i].TopPipe) < -PIPE_WIDTH - 80)
                 {
-                    GameCanvas.Children.Remove(pipes[i].TopPipe);
-                    GameCanvas.Children.Remove(pipes[i].BottomPipe);
-                    pipes.RemoveAt(i);
+                    GameCanvas.Children.Remove(_pipes[i].TopPipe);
+                    GameCanvas.Children.Remove(_pipes[i].BottomPipe);
+                    _pipes.RemoveAt(i);
                 }
             }
         }
 
-        private void UpdateScore()
+        private void UpdateScoreAndWeather()
         {
-            foreach (PipePair pipe in pipes)
-            {
-                double birdCenterX = Canvas.GetLeft(BirdImage) + BIRD_WIDTH / 2;
-                double pipeLeftEdge = Canvas.GetLeft(pipe.TopPipe);
-                double pipeRightEdge = pipeLeftEdge + PIPE_WIDTH;
+            double birdCenterX = Canvas.GetLeft(BirdImage) + BIRD_WIDTH / 2;
 
-                if (!pipe.HasScored && birdCenterX > pipeLeftEdge && birdCenterX < pipeRightEdge)
+            foreach (var pipe in _pipes)
+            {
+                if (pipe.HasScored) continue;
+
+                double pipeLeft = Canvas.GetLeft(pipe.TopPipe);
+                double pipeRight = pipeLeft + PIPE_WIDTH;
+
+                if (birdCenterX > pipeLeft && birdCenterX < pipeRight)
                 {
-                    score++;
-                    columnsPassed++;
                     pipe.HasScored = true;
-                    ScoreDisplay.Text = $"Pont: {score}";
+                    _score++;
+                    _columnsPassed++;
 
-                    UpdateWeatherPhase();
-                    UpdateWeatherUI();
+                    ScoreDisplay.Text = $"Pont: {_score}";
+
+                    if (_mapMode == MapMode.Petrik && _columnsPassed % 3 == 0)
+                    {
+                        _petrikIndex = (_petrikIndex + 1) % _petrikPaths.Length;
+                        BackgroundImage.Source = LoadFrozenImage(_petrikPaths[_petrikIndex]);
+                    }
+
+                    ApplyWeatherByMode();
                 }
             }
         }
 
-        private void UpdateWeatherPhase()
+        private void ApplyWeatherByMode()
         {
+            bool fogActive = false;
+            if (_fogMode == WeatherMode.On)
+                fogActive = true;
+            else if (_fogMode == WeatherMode.Few)
+                fogActive = IsFogActiveFew(_columnsPassed);
 
-            if (columnsPassed < 5)
-                currentWeatherPhase = WeatherPhase.ClearWeather;
-            else if (columnsPassed < 10)
-                currentWeatherPhase = WeatherPhase.FogOnly;
-            else if (columnsPassed < 15)
-                currentWeatherPhase = WeatherPhase.RainOnly;
-            else if (columnsPassed < 20)
-                currentWeatherPhase = WeatherPhase.FogOnly;
-            else if (columnsPassed < 25)
-                currentWeatherPhase = WeatherPhase.RainOnly;
-            else if (columnsPassed < 30)
-                currentWeatherPhase = WeatherPhase.FogOnly;
-            else 
-                currentWeatherPhase = WeatherPhase.RainOnly;
+            bool rainActive = false;
+            if (_rainMode == WeatherMode.On)
+                rainActive = true;
+            else if (_rainMode == WeatherMode.Few)
+                rainActive = IsRainActiveFew(_columnsPassed);
+
+            SetFogVisible(fogActive);
+            SetRainVisible(rainActive);
+
+            RainStatusDisplay.Text = rainActive ? "Eső: BE" : "Eső: KI";
+            FogStatusDisplay.Text = fogActive ? "Köd: BE" : "Köd: KI";
         }
 
-        private void UpdateWeatherUI()
+        private static bool IsFogActiveFew(int passed)
         {
-            isRaining = (currentWeatherPhase == WeatherPhase.RainOnly || currentWeatherPhase == WeatherPhase.RainAgain);
-            isFoggy = (currentWeatherPhase == WeatherPhase.FogOnly || currentWeatherPhase == WeatherPhase.FogAgain);
-
-            RainStatusDisplay.Text = isRaining ? "Eső: BE" : "Eső: KI";
-            FogStatusDisplay.Text = isFoggy ? "Köd: BE" : "Köd: KI";
-            FogLayer.Opacity = isFoggy ? 0.35 : 0;
+            if (passed < 5) return false;
+            int block = passed / 5;
+            return block % 2 == 1;
         }
 
-        private void CheckCollisions()
+        private static bool IsRainActiveFew(int passed)
         {
-            Rect birdRect = new Rect(
-                Canvas.GetLeft(BirdImage),
-                Canvas.GetTop(BirdImage),
-                BIRD_WIDTH,
-                BIRD_HEIGHT
-            );
+            if (passed < 10) return false;
+            int block = passed / 5;
+            return block % 2 == 0;
+        }
 
-            foreach (PipePair pipe in pipes)
+        private void SetFogVisible(bool active)
+        {
+            _isFoggy = active;
+            FogLayer.Opacity = active ? 0.35 : 0;
+        }
+
+        private void SetRainVisible(bool active)
+        {
+            _isRaining = active;
+
+            foreach (var d in _rainDrops)
+                d.Visibility = active ? Visibility.Visible : Visibility.Collapsed;
+        }
+
+        private void InitializeRainDrops()
+        {
+            for (int i = 0; i < 20; i++)
             {
-                Rect topPipeRect = new Rect(
-                    Canvas.GetLeft(pipe.TopPipe),
-                    Canvas.GetTop(pipe.TopPipe),
-                    PIPE_WIDTH,
-                    pipe.TopPipe.Height
-                );
-
-                Rect bottomPipeRect = new Rect(
-                    Canvas.GetLeft(pipe.BottomPipe),
-                    Canvas.GetTop(pipe.BottomPipe),
-                    PIPE_WIDTH,
-                    pipe.BottomPipe.Height
-                );
-
-                if (birdRect.IntersectsWith(topPipeRect) || birdRect.IntersectsWith(bottomPipeRect))
+                var drop = new Rectangle
                 {
-                    GameOver();
-                    return;
-                }
+                    Width = 3,
+                    Height = 15,
+                    Fill = Brushes.LightBlue,
+                    Opacity = 0.7,
+                    Visibility = Visibility.Collapsed
+                };
+
+                Canvas.SetLeft(drop, _rand.Next(0, CANVAS_WIDTH));
+                Canvas.SetTop(drop, _rand.Next(-CANVAS_HEIGHT, 0));
+
+                GameCanvas.Children.Add(drop);
+                _rainDrops.Add(drop);
             }
-        }
-
-        private void GameOver()
-        {
-            gameOver = true;
-            CompositionTarget.Rendering -= OnRenderFrame;
-
-            GameOverOverlay.Visibility = Visibility.Visible;
-            GameOverText.Visibility = Visibility.Visible;
-            FinalScoreText.Text = $"Végső pont: {score}";
-            FinalScoreText.Visibility = Visibility.Visible;
-            RestartText.Visibility = Visibility.Visible;
-
-            if (_gameOverImage != null)
-                BirdImage.Source = _gameOverImage;
-        }
-
-        private void RestartGame()
-        {
-            gameOver = false;
-            score = 0;
-            columnsPassed = 0;
-            velocity = 0;
-            currentWeatherPhase = WeatherPhase.ClearWeather;
-            _lastRenderTime = TimeSpan.Zero;
-
-            GameOverOverlay.Visibility = Visibility.Collapsed;
-            GameOverText.Visibility = Visibility.Collapsed;
-            FinalScoreText.Visibility = Visibility.Collapsed;
-            RestartText.Visibility = Visibility.Collapsed;
-            ScoreDisplay.Text = "Pont: 0";
-
-            Canvas.SetTop(BirdImage, 250);
-            if (_birdMid != null)
-                BirdImage.Source = _birdMid;
-
-            foreach (PipePair pipe in pipes)
-            {
-                GameCanvas.Children.Remove(pipe.TopPipe);
-                GameCanvas.Children.Remove(pipe.BottomPipe);
-            }
-            pipes.Clear();
-
-            SpawnPipe();
-
-            UpdateWeatherUI();
-
-            CompositionTarget.Rendering += OnRenderFrame;
-            GameCanvas.Focus();
         }
 
         private void UpdateRain(double dt)
         {
-            if (!isRaining) return;
+            if (!_isRaining) return;
 
-            double rainSpeed = RAIN_GRAVITY * 60 * dt;
+            double dy = RAIN_DROP_SPEED_PX_PER_SEC * dt;
 
-            foreach (Rectangle drop in rainDrops)
+            foreach (var drop in _rainDrops)
             {
-                double top = Canvas.GetTop(drop) + rainSpeed;
+                double top = Canvas.GetTop(drop) + dy;
 
                 if (top > CANVAS_HEIGHT)
                 {
-                    Canvas.SetLeft(drop, rand.Next(0, CANVAS_WIDTH));
-                    Canvas.SetTop(drop, rand.Next(-100, 0));
+                    Canvas.SetLeft(drop, _rand.Next(0, CANVAS_WIDTH));
+                    Canvas.SetTop(drop, _rand.Next(-150, 0));
                 }
                 else
                 {
                     Canvas.SetTop(drop, top);
                 }
             }
+        }
+
+        private void CheckCollisions()
+        {
+            var birdRect = new Rect(
+                Canvas.GetLeft(BirdImage),
+                Canvas.GetTop(BirdImage),
+                BIRD_WIDTH,
+                BIRD_HEIGHT
+            );
+
+            foreach (var pipe in _pipes)
+            {
+                var topRect = new Rect(
+                    Canvas.GetLeft(pipe.TopPipe),
+                    Canvas.GetTop(pipe.TopPipe),
+                    PIPE_WIDTH,
+                    pipe.TopPipe.Height
+                );
+
+                var bottomRect = new Rect(
+                    Canvas.GetLeft(pipe.BottomPipe),
+                    Canvas.GetTop(pipe.BottomPipe),
+                    PIPE_WIDTH,
+                    pipe.BottomPipe.Height
+                );
+
+                if (birdRect.IntersectsWith(topRect) || birdRect.IntersectsWith(bottomRect))
+                {
+                    EndGame();
+                    return;
+                }
+            }
+        }
+
+        private void PreloadBaseImages()
+        {
+            _bgFlappy = LoadFrozenImage(@"kepek\background.jpg");
+            _birdUp = LoadFrozenImage(@"kepek\flappyup.png");
+            _birdMid = LoadFrozenImage(@"kepek\flappymid.png");
+            _birdDown = LoadFrozenImage(@"kepek\flappydown.png");
+
+            if (_bgFlappy != null) BackgroundImage.Source = _bgFlappy;
+            if (_birdMid != null) BirdImage.Source = _birdMid;
+        }
+
+        private BitmapImage LoadFrozenImage(string relPath)
+        {
+            if (_imageCache.TryGetValue(relPath, out var cached))
+                return cached;
+
+            string full = System.IO.Path.Combine(AppDomain.CurrentDomain.BaseDirectory, relPath);
+
+            if (!System.IO.File.Exists(full))
+                return null;
+
+            var bi = new BitmapImage();
+            bi.BeginInit();
+            bi.UriSource = new Uri(full, UriKind.Absolute);
+            bi.CacheOption = BitmapCacheOption.OnLoad;
+            bi.EndInit();
+            bi.Freeze();
+
+            _imageCache[relPath] = bi;
+            return bi;
         }
     }
 
